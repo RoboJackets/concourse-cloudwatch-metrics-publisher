@@ -2,13 +2,13 @@
 Publish Concourse metrics to CloudWatch
 """
 from json import dumps
-from os import getenv
+from os import environ
 from time import time
 from typing import Dict, List
 
-from boto3 import client
+from boto3 import client  # type: ignore
 
-from prometheus_client.parser import text_string_to_metric_families
+from prometheus_client.parser import text_string_to_metric_families  # type: ignore
 
 from requests import get
 
@@ -66,7 +66,8 @@ def handler(event: None, context: None) -> None:  # pylint: disable=unused-argum
     Publish data points for Concourse metrics
     """
     timestamp = time()
-    response = get(url=getenv("CONCOURSE_METRICS_URL"))
+
+    response = get(url=environ["CONCOURSE_METRICS_URL"])
 
     if response.status_code != 200:
         raise ValueError(f"Concourse returned {response.status_code}: {response.text}")
