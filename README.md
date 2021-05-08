@@ -1,2 +1,2 @@
-# concourse-cloudwatch-metric-publisher
+# concourse-cloudwatch-metrics-publisher
 Publish Concourse metrics to CloudWatch
