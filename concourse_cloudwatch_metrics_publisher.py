@@ -21,14 +21,11 @@ INTERESTING_METRICS = (
 )
 IGNORE_LABELS = (
     "platform",
-    "teamId",
-    "team",
-    "type",
 )
-TAG_LABELS = (
-    "workerTags",
-    "tags",
-)
+REMAP_LABELS = {
+    "workerTags": "tags",
+    "teamId": "team",
+}
 
 cloudwatch = client("cloudwatch")
 
@@ -48,7 +45,10 @@ def labels_to_dimensions(labels: Dict[str, str]) -> List[Dict[str, str]]:
         if key in IGNORE_LABELS:
             continue
 
-        if key in TAG_LABELS and value == "":
+        if key in REMAP_LABELS:
+            key = REMAP_LABELS[key]
+
+        if value == "":
             value = "none"
 
         dimensions.append(
@@ -72,15 +72,29 @@ def handler(event: None, context: None) -> None:  # pylint: disable=unused-argum
     if response.status_code != 200:
         raise ValueError(f"Concourse returned {response.status_code}: {response.text}")
 
-    metric_data = []
+    parsed = text_string_to_metric_families(response.text)
 
-    for family in text_string_to_metric_families(response.text):
+    metric_data = []
+    flattened_data = set()
+
+    for family in parsed:
         if family.name in INTERESTING_METRICS:
+            print(family)
+
             for sample in family.samples:
+                dimensions = labels_to_dimensions(sample.labels)
+
+                flattened = sample.name + "_" + "_".join([dim["Name"] + "_" + dim["Value"] for dim in dimensions])
+
+                if flattened in flattened_data:
+                    raise ValueError(f"Found duplicate value for {flattened}")
+
+                flattened_data.add(flattened)
+
                 metric_data.append(
                     {
                         "MetricName": sample.name,
-                        "Dimensions": labels_to_dimensions(sample.labels),
+                        "Dimensions": dimensions,
                         "Timestamp": timestamp,
                         "Value": sample.value,
                         "Unit": "Count",
