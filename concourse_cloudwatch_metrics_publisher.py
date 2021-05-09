@@ -19,9 +19,7 @@ INTERESTING_METRICS = (
     "concourse_workers_containers",
     "concourse_workers_tasks",
 )
-IGNORE_LABELS = (
-    "platform",
-)
+IGNORE_LABELS = ("platform",)
 REMAP_LABELS = {
     "workerTags": "tags",
     "teamId": "team",
@@ -45,7 +43,7 @@ def labels_to_dimensions(labels: Dict[str, str]) -> List[Dict[str, str]]:
         if key in IGNORE_LABELS:
             continue
 
-        if key in REMAP_LABELS:
+        if key in REMAP_LABELS:  # pylint: disable=consider-using-get
             key = REMAP_LABELS[key]
 
         if value == "":
