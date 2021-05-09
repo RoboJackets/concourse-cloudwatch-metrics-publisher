@@ -1,6 +1,7 @@
 """
 Publish Concourse metrics to CloudWatch
 """
+from collections import Counter
 from json import dumps
 from os import environ
 from time import time
@@ -12,54 +13,12 @@ from prometheus_client.parser import text_string_to_metric_families  # type: ign
 
 from requests import get
 
-INTERESTING_METRICS = (
-    "concourse_steps_waiting",
-    "concourse_builds_running",
-    "concourse_jobs_scheduling",
-    "concourse_workers_containers",
-    "concourse_workers_tasks",
-)
-IGNORE_LABELS = ("platform",)
-REMAP_LABELS = {
-    "workerTags": "tags",
-    "teamId": "team",
-}
-
 cloudwatch = client("cloudwatch")
 
 
-def labels_to_dimensions(labels: Dict[str, str]) -> List[Dict[str, str]]:
-    """
-    Converts Prometheus labels to CloudWatch dimensions
-
-    :param labels: Prometheus label format
-    :return: CloudWatch dimension format
-    """
-    dimensions = []
-
-    for key in labels.keys():
-        value = labels[key]
-
-        if key in IGNORE_LABELS:
-            continue
-
-        if key in REMAP_LABELS:  # pylint: disable=consider-using-get
-            key = REMAP_LABELS[key]
-
-        if value == "":
-            value = "none"
-
-        dimensions.append(
-            {
-                "Name": key,
-                "Value": value,
-            }
-        )
-
-    return dimensions
-
-
-def handler(event: None, context: None) -> None:  # pylint: disable=unused-argument
+def handler(  # pylint: disable=too-many-locals,too-many-branches,too-many-statements
+    event: None, context: None  # pylint: disable=unused-argument
+) -> None:
     """
     Publish data points for Concourse metrics
     """
@@ -73,32 +32,126 @@ def handler(event: None, context: None) -> None:  # pylint: disable=unused-argum
     parsed = text_string_to_metric_families(response.text)
 
     metric_data = []
-    flattened_data = set()
+
+    untagged_worker_count = 0
+    concourse_builds_running = 0
+    concourse_jobs_scheduling = 0
 
     for family in parsed:
-        if family.name in INTERESTING_METRICS:
-            print(family)
+        if family.type != "gauge":
+            continue
 
+        print(family)
+
+        if family.name == "concourse_builds_running":
+            concourse_builds_running = family.samples[0].value
+
+        if family.name == "concourse_jobs_scheduling":
+            concourse_jobs_scheduling = family.samples[0].value
+
+        if family.name == "concourse_workers_containers":
+            concourse_workers_containers: Dict[str, List[int]] = {}
             for sample in family.samples:
-                dimensions = labels_to_dimensions(sample.labels)
+                tag = sample.labels["tags"]
+                if tag == "":
+                    tag = "none"
+                    untagged_worker_count += 1
 
-                flattened = sample.name + "_" + "_".join([dim["Name"] + "_" + dim["Value"] for dim in dimensions])
+                if tag in concourse_workers_containers:
+                    concourse_workers_containers[tag].append(sample.value)
+                else:
+                    concourse_workers_containers[tag] = [sample.value]
 
-                if flattened in flattened_data:
-                    raise ValueError(f"Found duplicate value for {flattened}")
+            for tag in concourse_workers_containers:
+                values = []
+                counts = []
 
-                flattened_data.add(flattened)
+                counter = Counter(concourse_workers_containers[tag])
+
+                for key in counter:
+                    values.append(key)
+                    counts.append(counter[key])
 
                 metric_data.append(
                     {
-                        "MetricName": sample.name,
-                        "Dimensions": dimensions,
+                        "MetricName": family.name,
+                        "Dimensions": [{"Name": "tag", "Value": tag}],
                         "Timestamp": timestamp,
-                        "Value": sample.value,
+                        "Values": values,
+                        "Counts": counts,
                         "Unit": "Count",
                         "StorageResolution": 60,
                     }
                 )
+
+        if family.name == "concourse_steps_waiting":
+            concourse_steps_waiting: Dict[str, int] = {}
+            for sample in family.samples:
+                tag = sample.labels["workerTags"]
+                if tag == "":
+                    tag = "none"
+
+                concourse_steps_waiting[tag] = concourse_steps_waiting.get(tag, 0) + sample.value
+
+            for tag in concourse_steps_waiting:
+                metric_data.append(
+                    {
+                        "MetricName": family.name,
+                        "Dimensions": [{"Name": "tag", "Value": tag}],
+                        "Timestamp": timestamp,
+                        "Value": concourse_steps_waiting[tag],
+                        "Unit": "Count",
+                        "StorageResolution": 60,
+                    }
+                )
+
+        if family.name == "concourse_workers_tasks":
+            aggregated = []
+            for sample in family.samples:
+                aggregated.append(sample.value)
+
+            values = []
+            counts = []
+
+            counter = Counter(aggregated)
+
+            for key in counter:
+                values.append(key)
+                counts.append(counter[key])
+
+            metric_data.append(
+                {
+                    "MetricName": family.name,
+                    "Dimensions": [],
+                    "Timestamp": timestamp,
+                    "Values": values,
+                    "Counts": counts,
+                    "Unit": "Count",
+                    "StorageResolution": 60,
+                }
+            )
+
+    metric_data.append(
+        {
+            "MetricName": "concourse_builds_running_per_worker",
+            "Dimensions": [],
+            "Timestamp": timestamp,
+            "Value": concourse_builds_running / (1 if untagged_worker_count == 0 else untagged_worker_count),
+            "Unit": "Count",
+            "StorageResolution": 60,
+        }
+    )
+
+    metric_data.append(
+        {
+            "MetricName": "concourse_jobs_scheduling_per_worker",
+            "Dimensions": [],
+            "Timestamp": timestamp,
+            "Value": concourse_jobs_scheduling / (1 if untagged_worker_count == 0 else untagged_worker_count),
+            "Unit": "Count",
+            "StorageResolution": 60,
+        }
+    )
 
     print(dumps(metric_data))
 
