@@ -35,7 +35,6 @@ def handler(  # pylint: disable=too-many-locals,too-many-branches,too-many-state
 
     untagged_worker_count = 0
     concourse_builds_running = 0
-    concourse_jobs_scheduling = 0
 
     for family in parsed:
         if family.type != "gauge":
@@ -45,9 +44,6 @@ def handler(  # pylint: disable=too-many-locals,too-many-branches,too-many-state
 
         if family.name == "concourse_builds_running":
             concourse_builds_running = family.samples[0].value
-
-        if family.name == "concourse_jobs_scheduling":
-            concourse_jobs_scheduling = family.samples[0].value
 
         if family.name == "concourse_workers_containers":
             concourse_workers_containers: Dict[str, List[int]] = {}
@@ -137,17 +133,6 @@ def handler(  # pylint: disable=too-many-locals,too-many-branches,too-many-state
             "Dimensions": [],
             "Timestamp": timestamp,
             "Value": concourse_builds_running / (1 if untagged_worker_count == 0 else untagged_worker_count),
-            "Unit": "Count",
-            "StorageResolution": 60,
-        }
-    )
-
-    metric_data.append(
-        {
-            "MetricName": "concourse_jobs_scheduling_per_worker",
-            "Dimensions": [],
-            "Timestamp": timestamp,
-            "Value": concourse_jobs_scheduling / (1 if untagged_worker_count == 0 else untagged_worker_count),
             "Unit": "Count",
             "StorageResolution": 60,
         }
