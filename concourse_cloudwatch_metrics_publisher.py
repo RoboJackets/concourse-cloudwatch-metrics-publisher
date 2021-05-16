@@ -19,12 +19,12 @@ cloudwatch = client("cloudwatch")
 worker_tags = {}
 
 
-def all_samples_aggregated_by_tag(family: Metric, timestamp: float) -> Tuple[int, List[Dict[str, Any]]]:
+def all_samples_aggregated_by_tag(metric: Metric, timestamp: float) -> Tuple[int, List[Dict[str, Any]]]:
     """
-    Maps a Prometheus metric family to one or more CloudWatch metrics, publishing all values and aggregating by worker
+    Maps a Prometheus metric to one or more CloudWatch metrics, publishing all values and aggregating by worker
     tag. Also counts the number of untagged workers for later use.
 
-    :param family: metric family object
+    :param metric: metric family object
     :param timestamp: when the data was retrieved
     :return: tuple of untagged worker count and CloudWatch metric data
     """
@@ -32,7 +32,7 @@ def all_samples_aggregated_by_tag(family: Metric, timestamp: float) -> Tuple[int
     samples_for_tag: Dict[str, List[int]] = {}
     untagged_workers = 0
 
-    for sample in family.samples:
+    for sample in metric.samples:
         tag = sample.labels["tags"]
         if tag == "":
             untagged_workers += 1
@@ -57,7 +57,7 @@ def all_samples_aggregated_by_tag(family: Metric, timestamp: float) -> Tuple[int
 
         metric_data.append(
             {
-                "MetricName": family.name,
+                "MetricName": metric.name,
                 "Dimensions": [{"Name": "tag", "Value": tag}],
                 "Timestamp": timestamp,
                 "Values": values,
@@ -90,26 +90,28 @@ def handler(  # pylint: disable=too-many-locals,too-many-branches,too-many-state
     untagged_worker_count = 0
     concourse_builds_running = 0
 
-    for family in parsed:
-        if family.type != "gauge":
+    for metric in parsed:
+        if metric.type != "gauge":
             continue
 
-        print(family)
+        print(metric)
 
-        if family.name == "concourse_builds_running":
-            concourse_builds_running = family.samples[0].value
+        if metric.name == "concourse_builds_running":
+            concourse_builds_running = metric.samples[0].value
 
-        if family.name == "concourse_workers_containers":
-            (untagged_worker_count, concourse_workers_containers) = all_samples_aggregated_by_tag(family, timestamp)
+        if metric.name == "concourse_workers_containers":
+            (untagged_worker_count, concourse_workers_containers) = all_samples_aggregated_by_tag(metric, timestamp)
+            print(concourse_workers_containers)
             metric_data.extend(concourse_workers_containers)
 
-        if family.name == "concourse_workers_volumes":
-            (untagged_worker_count, concourse_workers_volumes) = all_samples_aggregated_by_tag(family, timestamp)
+        if metric.name == "concourse_workers_volumes":
+            (untagged_worker_count, concourse_workers_volumes) = all_samples_aggregated_by_tag(metric, timestamp)
+            print(concourse_workers_volumes)
             metric_data.extend(concourse_workers_volumes)
 
-        if family.name == "concourse_steps_waiting":
+        if metric.name == "concourse_steps_waiting":
             concourse_steps_waiting: Dict[str, int] = {}
-            for sample in family.samples:
+            for sample in metric.samples:
                 tag = sample.labels["workerTags"]
                 if tag == "":
                     tag = "none"
@@ -119,7 +121,7 @@ def handler(  # pylint: disable=too-many-locals,too-many-branches,too-many-state
             for tag in concourse_steps_waiting:
                 metric_data.append(
                     {
-                        "MetricName": family.name,
+                        "MetricName": metric.name,
                         "Dimensions": [{"Name": "tag", "Value": tag}],
                         "Timestamp": timestamp,
                         "Value": concourse_steps_waiting[tag],
@@ -128,11 +130,10 @@ def handler(  # pylint: disable=too-many-locals,too-many-branches,too-many-state
                     }
                 )
 
-        if family.name == "concourse_workers_tasks":
-            metric_data = []
+        if metric.name == "concourse_workers_tasks":
             samples_for_tag: Dict[str, List[int]] = {}
 
-            for sample in family.samples:
+            for sample in metric.samples:
                 worker = sample.labels["worker"]
                 if worker in worker_tags:
                     tag = worker_tags[worker]
@@ -156,7 +157,7 @@ def handler(  # pylint: disable=too-many-locals,too-many-branches,too-many-state
 
                 metric_data.append(
                     {
-                        "MetricName": family.name,
+                        "MetricName": metric.name,
                         "Dimensions": [{"Name": "tag", "Value": tag}],
                         "Timestamp": timestamp,
                         "Values": values,
