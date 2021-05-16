@@ -5,15 +5,69 @@ from collections import Counter
 from json import dumps
 from os import environ
 from time import time
-from typing import Dict, List
+from typing import Any, Dict, List, Tuple
 
 from boto3 import client  # type: ignore
 
+from prometheus_client import Metric  # type: ignore
 from prometheus_client.parser import text_string_to_metric_families  # type: ignore
 
 from requests import get
 
 cloudwatch = client("cloudwatch")
+
+worker_tags = {}
+
+
+def all_samples_aggregated_by_tag(family: Metric, timestamp: float) -> Tuple[int, List[Dict[str, Any]]]:
+    """
+    Maps a Prometheus metric family to one or more CloudWatch metrics, publishing all values and aggregating by worker
+    tag. Also counts the number of untagged workers for later use.
+
+    :param family: metric family object
+    :param timestamp: when the data was retrieved
+    :return: tuple of untagged worker count and CloudWatch metric data
+    """
+    metric_data = []
+    samples_for_tag: Dict[str, List[int]] = {}
+    untagged_workers = 0
+
+    for sample in family.samples:
+        tag = sample.labels["tags"]
+        if tag == "":
+            untagged_workers += 1
+            tag = "none"
+
+        if tag in samples_for_tag:
+            samples_for_tag[tag].append(sample.value)
+        else:
+            samples_for_tag[tag] = [sample.value]
+
+        worker_tags[sample.labels["worker"]] = tag
+
+    for tag in samples_for_tag:
+        values = []
+        counts = []
+
+        counter = Counter(samples_for_tag[tag])
+
+        for value in counter:
+            values.append(value)
+            counts.append(counter[value])
+
+        metric_data.append(
+            {
+                "MetricName": family.name,
+                "Dimensions": [{"Name": "tag", "Value": tag}],
+                "Timestamp": timestamp,
+                "Values": values,
+                "Counts": counts,
+                "Unit": "Count",
+                "StorageResolution": 60,
+            }
+        )
+
+    return untagged_workers, metric_data
 
 
 def handler(  # pylint: disable=too-many-locals,too-many-branches,too-many-statements
@@ -31,7 +85,7 @@ def handler(  # pylint: disable=too-many-locals,too-many-branches,too-many-state
 
     parsed = text_string_to_metric_families(response.text)
 
-    metric_data = []
+    metric_data: List[Dict[str, Any]] = []
 
     untagged_worker_count = 0
     concourse_builds_running = 0
@@ -46,39 +100,12 @@ def handler(  # pylint: disable=too-many-locals,too-many-branches,too-many-state
             concourse_builds_running = family.samples[0].value
 
         if family.name == "concourse_workers_containers":
-            concourse_workers_containers: Dict[str, List[int]] = {}
-            for sample in family.samples:
-                tag = sample.labels["tags"]
-                if tag == "":
-                    tag = "none"
-                    untagged_worker_count += 1
+            (untagged_worker_count, concourse_workers_containers) = all_samples_aggregated_by_tag(family, timestamp)
+            metric_data.extend(concourse_workers_containers)
 
-                if tag in concourse_workers_containers:
-                    concourse_workers_containers[tag].append(sample.value)
-                else:
-                    concourse_workers_containers[tag] = [sample.value]
-
-            for tag in concourse_workers_containers:
-                values = []
-                counts = []
-
-                counter = Counter(concourse_workers_containers[tag])
-
-                for key in counter:
-                    values.append(key)
-                    counts.append(counter[key])
-
-                metric_data.append(
-                    {
-                        "MetricName": family.name,
-                        "Dimensions": [{"Name": "tag", "Value": tag}],
-                        "Timestamp": timestamp,
-                        "Values": values,
-                        "Counts": counts,
-                        "Unit": "Count",
-                        "StorageResolution": 60,
-                    }
-                )
+        if family.name == "concourse_workers_volumes":
+            (untagged_worker_count, concourse_workers_volumes) = all_samples_aggregated_by_tag(family, timestamp)
+            metric_data.extend(concourse_workers_volumes)
 
         if family.name == "concourse_steps_waiting":
             concourse_steps_waiting: Dict[str, int] = {}
@@ -102,30 +129,42 @@ def handler(  # pylint: disable=too-many-locals,too-many-branches,too-many-state
                 )
 
         if family.name == "concourse_workers_tasks":
-            aggregated = []
+            metric_data = []
+            samples_for_tag: Dict[str, List[int]] = {}
+
             for sample in family.samples:
-                aggregated.append(sample.value)
+                worker = sample.labels["worker"]
+                if worker in worker_tags:
+                    tag = worker_tags[worker]
+                else:
+                    continue
 
-            values = []
-            counts = []
+                if tag in samples_for_tag:
+                    samples_for_tag[tag].append(sample.value)
+                else:
+                    samples_for_tag[tag] = [sample.value]
 
-            counter = Counter(aggregated)
+            for tag in samples_for_tag:
+                values = []
+                counts = []
 
-            for key in counter:
-                values.append(key)
-                counts.append(counter[key])
+                counter = Counter(samples_for_tag[tag])
 
-            metric_data.append(
-                {
-                    "MetricName": family.name,
-                    "Dimensions": [],
-                    "Timestamp": timestamp,
-                    "Values": values,
-                    "Counts": counts,
-                    "Unit": "Count",
-                    "StorageResolution": 60,
-                }
-            )
+                for value in counter:
+                    values.append(value)
+                    counts.append(counter[value])
+
+                metric_data.append(
+                    {
+                        "MetricName": family.name,
+                        "Dimensions": [{"Name": "tag", "Value": tag}],
+                        "Timestamp": timestamp,
+                        "Values": values,
+                        "Counts": counts,
+                        "Unit": "Count",
+                        "StorageResolution": 60,
+                    }
+                )
 
     metric_data.append(
         {
