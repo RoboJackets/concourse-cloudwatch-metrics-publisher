@@ -7,12 +7,12 @@ license = "MIT"
 
 [tool.poetry.dependencies]
 python = "^3.8"
-boto3 = "^1.17.69"
 prometheus-client = "^0.10.1"
 requests = "^2.25.1"
 
 [tool.poetry.dev-dependencies]
 black = "^21.5b0"
+boto3 = "^1.17.69"
 flake8 = "*"
 flake8-black = "*"
 flake8-bugbear = "*"
