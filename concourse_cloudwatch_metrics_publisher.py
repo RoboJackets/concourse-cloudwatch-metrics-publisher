@@ -78,7 +78,7 @@ def handler(  # pylint: disable=too-many-locals,too-many-branches,too-many-state
     """
     timestamp = time()
 
-    response = get(url=environ["CONCOURSE_METRICS_URL"])
+    response = get(url=environ["CONCOURSE_METRICS_URL"], timeout=1)
 
     if response.status_code != 200:
         raise ValueError(f"Concourse returned {response.status_code}: {response.text}")
