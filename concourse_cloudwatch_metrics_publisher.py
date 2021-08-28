@@ -45,11 +45,11 @@ def all_samples_aggregated_by_tag(metric: Metric, timestamp: float) -> Tuple[int
 
         worker_tags[sample.labels["worker"]] = tag
 
-    for tag in samples_for_tag:
+    for tag, samples in samples_for_tag.items():
         values = []
         counts = []
 
-        counter = Counter(samples_for_tag[tag])
+        counter = Counter(samples)
 
         for value in counter:
             values.append(value)
@@ -118,13 +118,13 @@ def handler(  # pylint: disable=too-many-locals,too-many-branches,too-many-state
 
                 concourse_steps_waiting[tag] = concourse_steps_waiting.get(tag, 0) + sample.value
 
-            for tag in concourse_steps_waiting:
+            for tag, value in concourse_steps_waiting.items():
                 metric_data.append(
                     {
                         "MetricName": metric.name,
                         "Dimensions": [{"Name": "tag", "Value": tag}],
                         "Timestamp": timestamp,
-                        "Value": concourse_steps_waiting[tag],
+                        "Value": value,
                         "Unit": "Count",
                         "StorageResolution": 60,
                     }
@@ -145,11 +145,11 @@ def handler(  # pylint: disable=too-many-locals,too-many-branches,too-many-state
                 else:
                     samples_for_tag[tag] = [sample.value]
 
-            for tag in samples_for_tag:
+            for tag, samples in samples_for_tag.items():
                 values = []
                 counts = []
 
-                counter = Counter(samples_for_tag[tag])
+                counter = Counter(samples)
 
                 for value in counter:
                     values.append(value)
